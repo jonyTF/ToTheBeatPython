@@ -12,6 +12,25 @@
 #max freq           = 20000
 #pixels per sec     = 150
 
+import tensorflow as tf
+from tensorflow import keras
+
+def time_to_pixel_col(sec):
+    return sec * 150
+
+def pixel_col_to_time(col):
+    return col / 150
+
+
+
+
+
+
+
+
+
+
+
 
 
 '''from scipy.spatial import distance
