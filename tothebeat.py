@@ -41,7 +41,7 @@ with open('energy.csv') as f:
             beat_times.append(sec)
 
 def getDuration(filename):
-    result = subprocess.Popen(['ffprobe', filename], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    result = subprocess.Popen(['ffmpeg', '-i', filename], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for l in result.stdout.readlines():
         l = l.decode('utf-8')
         if 'Duration' in l:
@@ -91,39 +91,53 @@ for i in range(len(vids)):
         interval = beat_times[beat_index + 1] - beat_times[beat_index]
 
 print(beat_times)
+
 print(clips)
-
-
 
 #with tempfile.TemporaryDirectory() as directory:
 directory = 'tmp'
 concat_str = ''
+
+print('Cutting clips...', end='')
+sys.stdout.flush()
+
 for i in range(len(clips)):
     mp4_name = 'out'+str(i)+'.mp4'
-    cmd = ['ffmpeg', '-ss', clips[i][1], '-i', clips[i][0], '-c', 'copy', '-t', clips[i][2], directory + '/' + mp4_name]
+    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'panic', '-ss', clips[i][1], '-i', clips[i][0], '-t', clips[i][2], '-avoid_negative_ts', 'make_zero', '-c', 'copy', '-y', directory + '/' + mp4_name]
+    #cmd = ['ffmpeg', '-i', clips[i][0], '-ss', clips[i][1], '-t', clips[i][2], '-c', 'copy', '-y', directory + '/' + mp4_name]
     subprocess.call(cmd)
 
-    mp4_name2 = 'out_'+str(i)+'.mp4'
-    cmd = ['ffmpeg', '-fflags', '+genpts', '-avoid_negative_ts', 'make_zero', '-i', directory + '/' + mp4_name, '-c', 'copy', directory + '/' + mp4_name2]
+    mp4_corrected_name = 'out'+str(i)+'_c.mp4' # Correct the length
+    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'panic', '-ss', '0', '-i', directory + '/' + mp4_name, '-t', clips[i][2], '-avoid_negative_ts', 'make_zero', '-c', 'copy', '-y', directory + '/' + mp4_corrected_name]
     subprocess.call(cmd)
-    concat_str += "file '"+ mp4_name2 +"'\n"
+
+    concat_str += "file '"+ mp4_corrected_name +"'\n"
     #concat_str += ts_name + '|'
 
-with open(directory + '/list.txt', 'w') as f:
+concat_file = directory + '/list.txt'
+with open(concat_file, 'w') as f:
     f.write(concat_str)
-exit()
-concat_str = concat_str[:-1]
-print(concat_str)
 
+print('Finished.')
+sys.stdout.flush()
+
+print('Combining clips...', end='')
+sys.stdout.flush()
 full_vid_name = directory+'/full.mp4'
-cmd = ['ffmpeg', '-fflags', '+genpts', '-avoid_negative_ts', 'make_zero', '-i', concat_str, '-c', 'copy', full_vid_name]
+cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'panic', '-f', 'concat', '-safe', '0', '-i', concat_file, '-c', 'copy', '-y', full_vid_name]
 subprocess.call(cmd)
+print('Finished.')
+sys.stdout.flush()
 
+print('Adding audio...', end='')
+sys.stdout.flush()
 song_name = 'training_data/energy.mp3'
-cmd = ['ffmpeg', '-i', full_vid_name, '-i', song_name, '-c', 'copy', '-shortest', '-map', '0:v:0', '-map', '1:a:0', 'final.mp4']
+cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'panic', '-i', full_vid_name, '-i', song_name, '-c', 'copy', '-shortest', '-map', '0:v:0', '-map', '1:a:0', '-y', 'final.mp4']
 subprocess.call(cmd)
+print('Finished')
+sys.stdout.flush()
 
-print(directory)
+print('Temp directory: ', directory)
 
 print('DONEEE')
 
@@ -138,8 +152,13 @@ print('DONEEE')
 #t = getLength('test_videos/VID_20190308_163349.mp4')
 #if ()
 
+
+''' ### Normal cut
+ffmpeg -i input.mp4 -ss 00:27 -t 00:15 -acodec copy -vcodec copy -y output_nc.mp4
 '''
-ffmpeg -ss 30 -i input.mp4 -c copy -t 10 output.mp4
+
+''' ### Keyframe cut
+ffmpeg -ss 00:27 -i input.mp4 -t 00:15 -avoid_negative_ts make_zero -acodec copy -vcodec copy -y output_kc.mp4
 '''
 
 '''
