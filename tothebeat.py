@@ -63,7 +63,7 @@ def exportBeatTimesAsCSV(beat_times, path):
 ###########
 # OPTIONS #
 ###########
-audio_path = './training_data/creativeminds.mp3'    # Path of the song being used
+audio_path = './music/creativeminds.mp3'    # Path of the song being used
 sep = 5                                             # Clips from the same video must be at least this many seconds apart
 resolution_w = 1920                                 # Output resolution of video (WIDTH)
 resolution_h = 1080                                 # Output resolution of video (HEIGHT)
