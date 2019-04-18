@@ -60,10 +60,13 @@ def getBeatTimesFromCSV(path, split_every_n_beat):
 def exportBeatTimesAsCSV(beat_times, path):
     librosa.output.times_csv(path, beat_times)  
 
+# TODO: Also allow user to just split music into beat chunks to manually add videos
+# TODO: Allow user to use pictures as well, instead of only videos
+
 ###########
 # OPTIONS #
 ###########
-audio_path = './music/creativeminds.mp3'    # Path of the song being used
+audio_path = './music/creativeminds.mp3'            # Path of the song being used
 sep = 5                                             # Clips from the same video must be at least this many seconds apart
 resolution_w = 1920                                 # Output resolution of video (WIDTH)
 resolution_h = 1080                                 # Output resolution of video (HEIGHT)
