@@ -54,7 +54,7 @@ def getFrameRate(filename):
     for l in result.stdout.readlines():
         l = l.decode('utf-8')
         if 'Video' in l:
-            return l[l.rindex(',', 0, l.index('fps'))+1:l.index('fps')].strip()
+            return float(l[l.rindex(',', 0, l.index('fps'))+1:l.index('fps')].strip())
     raise Exception('Framerate not found for ' + filename)
 
 def getSec(timestamp):
@@ -81,9 +81,12 @@ for i in range(len(beat_times) - 1):
     length = getLength(vids[vid_index])
 '''
 
+
+fps = 30
 clips = []
 beat_index = 0
 interval = beat_times[beat_index + 1] - beat_times[beat_index]
+tot_frames = 0
 
 for i in range(len(vids)):
     if beat_index + 1 >= len(beat_times):
@@ -92,12 +95,20 @@ for i in range(len(vids)):
     length = getSec(getDuration(vids[i]))
 
     cur_time = 0
+
     while cur_time+interval < length:
-        # TODO: convert these to frame numbers
-        clips.append((i, cur_time, interval))
+        cur_time_fn = cur_time * fps
+        interval_fn = interval * fps # + err
+
+        correct_frame = int(beat_times[beat_index] * fps)
+        if tot_frames != correct_frame:
+            interval_fn += correct_frame - tot_frames
+
+        clips.append((i, int(cur_time_fn), int(cur_time_fn) + int(interval_fn)))
+        tot_frames += int(interval_fn)
         
 
-        cur_time = cur_time+interval+sep
+        cur_time = int(cur_time+interval+sep)
 
         beat_index += 1
         interval = beat_times[beat_index + 1] - beat_times[beat_index]
@@ -107,13 +118,6 @@ print(beat_times)
 
 print(clips)
 
-'''
-ffmpeg -i test_videos/leaf.mp4 -i test_videos/pan.mp4 -filter_complex 
-    "[0:v]trim=start=5:duration=2,setpts=PTS-STARTPTS[v1];
-    [1:v]trim=start=3:duration=2,setpts=PTS-STARTPTS[v2];
-    [v1][v2]concat=n=2[v]" -map "[v]" output.mp4
-'''
-
 #NEW version that uses filter_complex
 song_name = 'training_data/energy.mp3'
 
@@ -121,6 +125,8 @@ cmd = ['ffmpeg']
 cmd.append('-i')
 cmd.append(song_name)
 for vid in vids:
+    cmd.append('-r')
+    cmd.append(str(fps))
     cmd.append('-i')
     cmd.append(vid)
 cmd.append('-filter_complex')
@@ -128,17 +134,14 @@ cmd.append('-filter_complex')
 filter_str = ''
 concat_str = ''
 for i in range(len(clips)):
-    # (i, str(cur_time), str(interval))
-    # SEE if this rounding causes problems
     # Add 1 to clips[i][0] because the song is the 0th input
-    trim_str = '[%d:v]trim=start=%.3f:duration=2,setpts=PTS-STARTPTS[v%d];' % (clips[i][0] + 1, clips[i][1], i)
+    trim_str = '[%d:v]trim=start_frame=%d:end_frame=%d,setpts=PTS-STARTPTS[v%d];' % (clips[i][0] + 1, clips[i][1], clips[i][2], i)
     #print(trim_str)
     filter_str += trim_str
     concat_str += '[v%d]' % (i)
 concat_str += 'concat=n=%d[out]' % (len(clips))
 filter_str += concat_str
 
-#cmd.append('"%s"' % (filter_str))
 cmd.append(filter_str)
 cmd.append('-shortest')
 cmd.append('-map')
@@ -147,6 +150,8 @@ cmd.append('-map')
 cmd.append('0:a')
 cmd.append('-preset')
 cmd.append('ultrafast')
+cmd.append('-r')
+cmd.append(str(fps))
 cmd.append('output.mp4')
 subprocess.call(cmd)
 
