@@ -81,7 +81,9 @@ for i in range(len(beat_times) - 1):
     length = getLength(vids[vid_index])
 '''
 
-
+resolution_w = 1920
+resolution_h = 1080
+#3840x2160
 fps = 30
 clips = []
 beat_index = 0
@@ -94,6 +96,10 @@ for i in range(len(vids)):
 
     length = getSec(getDuration(vids[i]))
 
+    # Needed to fix speed issues as a result of forcing frame rate to `fps`
+    orig_fps = getFrameRate(vids[i])
+    factor = fps / orig_fps
+
     cur_time = 0
 
     while cur_time+interval < length:
@@ -104,7 +110,7 @@ for i in range(len(vids)):
         if tot_frames != correct_frame:
             interval_fn += correct_frame - tot_frames
 
-        clips.append((i, int(cur_time_fn), int(cur_time_fn) + int(interval_fn)))
+        clips.append((i, int(cur_time_fn), int(cur_time_fn) + int(interval_fn), factor))
         tot_frames += int(interval_fn)
         
 
@@ -124,18 +130,19 @@ song_name = 'training_data/energy.mp3'
 cmd = ['ffmpeg']
 cmd.append('-i')
 cmd.append(song_name)
-for vid in vids:
+
+for i in range(len(vids)):
     cmd.append('-r')
     cmd.append(str(fps))
     cmd.append('-i')
-    cmd.append(vid)
-cmd.append('-filter_complex')
+    cmd.append(vids[i])
 
+cmd.append('-filter_complex')
 filter_str = ''
 concat_str = ''
 for i in range(len(clips)):
     # Add 1 to clips[i][0] because the song is the 0th input
-    trim_str = '[%d:v]trim=start_frame=%d:end_frame=%d,setpts=PTS-STARTPTS[v%d];' % (clips[i][0] + 1, clips[i][1], clips[i][2], i)
+    trim_str = '[%d:v]setpts=%.3f*PTS,trim=start_pts=%d:end_pts=%d,setpts=PTS-STARTPTS,scale=w=%d:h=%d:force_original_aspect_ratio=decrease[v%d];' % (clips[i][0] + 1, clips[i][3], clips[i][1], clips[i][2], resolution_w, resolution_h, i)
     #print(trim_str)
     filter_str += trim_str
     concat_str += '[v%d]' % (i)
