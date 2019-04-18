@@ -14,6 +14,7 @@ from os import walk
 import os
 import tempfile
 
+import time
 '''
 audio_path = './training_data/summer.mp3'
 
@@ -47,6 +48,14 @@ def getDuration(filename):
         if 'Duration' in l:
             return l[ l.index(':')+1 : l.index('.')].strip()
     raise Exception('Video length not found for ' + filename)
+
+def getFrameRate(filename):
+    result = subprocess.Popen(['ffmpeg', '-i', filename], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for l in result.stdout.readlines():
+        l = l.decode('utf-8')
+        if 'Video' in l:
+            return l[l.rindex(',', 0, l.index('fps'))+1:l.index('fps')].strip()
+    raise Exception('Framerate not found for ' + filename)
 
 def getSec(timestamp):
     h, m, s = timestamp.split(':')
@@ -82,66 +91,112 @@ for i in range(len(vids)):
 
     length = getSec(getDuration(vids[i]))
 
-    time = 0
-    while time+interval < length:
-        clips.append((vids[i], str(time), str(interval)))
+    cur_time = 0
+    while cur_time+interval < length:
+        # TODO: convert these to frame numbers
+        clips.append((i, cur_time, interval))
         
+
+        cur_time = cur_time+interval+sep
+
         beat_index += 1
-        time = time+interval+sep
         interval = beat_times[beat_index + 1] - beat_times[beat_index]
 
 print(beat_times)
 
+
 print(clips)
 
-#with tempfile.TemporaryDirectory() as directory:
-directory = 'tmp'
-concat_str = ''
+'''
+ffmpeg -i test_videos/leaf.mp4 -i test_videos/pan.mp4 -filter_complex 
+    "[0:v]trim=start=5:duration=2,setpts=PTS-STARTPTS[v1];
+    [1:v]trim=start=3:duration=2,setpts=PTS-STARTPTS[v2];
+    [v1][v2]concat=n=2[v]" -map "[v]" output.mp4
+'''
 
-print('Cutting clips...', end='')
-sys.stdout.flush()
-
-for i in range(len(clips)):
-    mp4_name = 'out'+str(i)+'.mp4'
-    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'panic', '-ss', clips[i][1], '-i', clips[i][0], '-t', clips[i][2], '-avoid_negative_ts', 'make_zero', '-c', 'copy', '-y', directory + '/' + mp4_name]
-    #cmd = ['ffmpeg', '-i', clips[i][0], '-ss', clips[i][1], '-t', clips[i][2], '-c', 'copy', '-y', directory + '/' + mp4_name]
-    subprocess.call(cmd)
-
-    mp4_corrected_name = 'out'+str(i)+'_c.mp4' # Correct the length
-    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'panic', '-ss', '0', '-i', directory + '/' + mp4_name, '-t', clips[i][2], '-avoid_negative_ts', 'make_zero', '-c', 'copy', '-y', directory + '/' + mp4_corrected_name]
-    subprocess.call(cmd)
-
-    concat_str += "file '"+ mp4_corrected_name +"'\n"
-    #concat_str += ts_name + '|'
-
-concat_file = directory + '/list.txt'
-with open(concat_file, 'w') as f:
-    f.write(concat_str)
-
-print('Finished.')
-sys.stdout.flush()
-
-print('Combining clips...', end='')
-sys.stdout.flush()
-full_vid_name = directory+'/full.mp4'
-cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'panic', '-f', 'concat', '-safe', '0', '-i', concat_file, '-c', 'copy', '-y', full_vid_name]
-subprocess.call(cmd)
-print('Finished.')
-sys.stdout.flush()
-
-print('Adding audio...', end='')
-sys.stdout.flush()
+#NEW version that uses filter_complex
 song_name = 'training_data/energy.mp3'
-cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'panic', '-i', full_vid_name, '-i', song_name, '-c', 'copy', '-shortest', '-map', '0:v:0', '-map', '1:a:0', '-y', 'final.mp4']
+
+cmd = ['ffmpeg']
+cmd.append('-i')
+cmd.append(song_name)
+for vid in vids:
+    cmd.append('-i')
+    cmd.append(vid)
+cmd.append('-filter_complex')
+
+filter_str = ''
+concat_str = ''
+for i in range(len(clips)):
+    # (i, str(cur_time), str(interval))
+    # SEE if this rounding causes problems
+    # Add 1 to clips[i][0] because the song is the 0th input
+    trim_str = '[%d:v]trim=start=%.3f:duration=2,setpts=PTS-STARTPTS[v%d];' % (clips[i][0] + 1, clips[i][1], i)
+    #print(trim_str)
+    filter_str += trim_str
+    concat_str += '[v%d]' % (i)
+concat_str += 'concat=n=%d[out]' % (len(clips))
+filter_str += concat_str
+
+#cmd.append('"%s"' % (filter_str))
+cmd.append(filter_str)
+cmd.append('-shortest')
+cmd.append('-map')
+cmd.append('[out]')
+cmd.append('-map')
+cmd.append('0:a')
+cmd.append('-preset')
+cmd.append('ultrafast')
+cmd.append('output.mp4')
 subprocess.call(cmd)
-print('Finished')
-sys.stdout.flush()
 
-print('Temp directory: ', directory)
+#OLD version that uses stream copy
+'''
+with tempfile.TemporaryDirectory() as directory:
+    #directory = 'tmp'
+    concat_str = ''
 
-print('DONEEE')
+    print('Cutting clips...', end='')
+    sys.stdout.flush()
 
+    for i in range(len(clips)):
+        mp4_name = 'out'+str(i)+'.mp4'
+        cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'panic', '-ss', clips[i][1], '-i', clips[i][0], '-t', clips[i][2], '-avoid_negative_ts', 'make_zero', '-c', 'copy', '-y', directory + '/' + mp4_name]
+        #cmd = ['ffmpeg', '-i', clips[i][0], '-ss', clips[i][1], '-t', clips[i][2], '-c', 'copy', '-y', directory + '/' + mp4_name]
+        subprocess.call(cmd)
 
+        mp4_corrected_name = 'out'+str(i)+'_c.mp4' # Correct the length
+        cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'panic', '-i', directory + '/' + mp4_name, '-t', clips[i][2], '-avoid_negative_ts', 'make_zero', '-c', 'copy', '-y', directory + '/' + mp4_corrected_name]
+        subprocess.call(cmd)
+
+        concat_str += "file '"+ mp4_corrected_name +"'\n"
+
+    concat_file = directory + '/list.txt'
+    with open(concat_file, 'w') as f:
+        f.write(concat_str)
+
+    print('Finished.')
+
+    print('Combining clips...', end='')
+    sys.stdout.flush()
+    full_vid_name = directory+'/full.mp4'
+    cmd = ['ffmpeg', '-hide_banner', '-f', 'concat', '-safe', '0', '-i', concat_file, '-c', 'copy', '-y', full_vid_name]
+    subprocess.call(cmd)
+    print('Finished.')
+
+    print('Adding audio...', end='')
+    sys.stdout.flush()
+    song_name = 'training_data/energy.mp3'
+    cmd = ['ffmpeg', '-hide_banner', '-i', full_vid_name, '-i', song_name, '-c', 'copy', '-shortest', '-map', '0:v:0', '-map', '1:a:0', '-y', 'final.mp4']
+    subprocess.call(cmd)
+    print('Finished')
+
+    print('Temp directory: ', directory)
+'''
+
+print('DONE')
+
+#'-loglevel', 'panic',
 
     
 
