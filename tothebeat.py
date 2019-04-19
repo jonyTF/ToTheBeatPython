@@ -6,7 +6,8 @@ import sys
 from os import walk
 
 def createThumbnail(vid_path, img_path):
-    subprocess.call(['ffmpeg', '-i', vid_path, '-vframes', '1', img_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    cmd = ['ffmpeg', '-i', vid_path, '-vf', 'scale=w=320:h=240:force_original_aspect_ratio=decrease', '-vframes', '1', '-y', img_path]
+    subprocess.call(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
 def getDuration(filename):
     # Get the duration of media file `filename`

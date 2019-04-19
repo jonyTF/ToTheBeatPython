@@ -9,6 +9,7 @@ librosa = "*"
 pillow = "*"
 
 [dev-packages]
+rope = "*"
 
 [requires]
 python_version = "3.6"
