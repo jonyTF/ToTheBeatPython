@@ -1,10 +1,86 @@
-from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QMainWindow, QGroupBox, QLineEdit, QFileDialog, QListWidget, QSizePolicy, QAbstractItemView, QProgressBar
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QMainWindow, QGroupBox, QLineEdit, QFileDialog, QListWidget, QSizePolicy, QAbstractItemView, QProgressBar, QMessageBox, QListWidgetItem
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QIcon
 import tothebeat
 import sys
+import subprocess
+import uuid
 
-# TODO: Allow user to either select a bunch of video files (store this in a list) or just select a directory and add all the video files
-#       User can also reorganize the video files to their liking
+# TODO: Show thumbnails of videos - CREATE A NEW THREAD FOR THUMBNAILS rather than blocking up program
+# TODO: Allow user to edit advanced options 
+
+class RenderVideoThread(QThread):
+    set_progress = pyqtSignal(int)
+
+    def __init__(self,
+        audio_path,
+        output_file_name,
+        resolution_w,
+        resolution_h,
+        sep=5,
+        fps=30,
+        split_every_n_beat=4,
+        preset='ultrafast',
+        csv_path='',
+        vids=[],
+        vid_directory=''
+    ):
+        QThread.__init__(self)
+        self.audio_path = audio_path
+        self.output_file_name = output_file_name
+        self.resolution_w = resolution_w
+        self.resolution_h = resolution_h
+        self.sep = sep
+        self.fps = fps
+        self.split_every_n_beat = split_every_n_beat
+        self.preset = preset
+        self.csv_path = csv_path
+        self.vids = vids
+        self.vid_directory = vid_directory
+
+    def __del__(self):
+        self.wait()
+
+    def run(self):
+        data = tothebeat.getRenderVideoCmd(
+            self.audio_path,
+            self.output_file_name,
+            self.resolution_w,
+            self.resolution_h,
+            self.sep,
+            self.fps,
+            self.split_every_n_beat,
+            self.preset,
+            self.csv_path,
+            self.vids,
+            self.vid_directory
+        )
+        self.set_progress.emit(10)
+        
+        # Run cmd, track progress
+        cmd = data[0]
+        tot_frames = data[1]
+
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        line = ''
+        end_char = '\n'
+        for c in iter(lambda: process.stdout.read(1), b''):
+            c = c.decode('utf-8')
+            if c != end_char:
+                line += c
+                if 'frame=' in line:
+                    end_char = 'x'
+            else:
+                if '[fatal]' in line:
+                    raise Exception('An error occurred: ' + line)
+                elif 'frame=' in line:
+                    cur_frame = int(line[line.index('frame=')+6:line.index('fps')].strip())
+                    progress = cur_frame / tot_frames
+                    self.set_progress.emit(10 + int(progress*90))
+                line = ''
+        
+        print('Render complete.')
+
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -67,7 +143,7 @@ class MainWindow(QMainWindow):
         # Maybe make button bigger vertically so it's more obvious?
         self.start_btn = QPushButton('Start')
         self.start_btn.clicked.connect(self.start)
-        self.can_start = {'vid_chooser_list': False, 'music_file_textbox': False}
+        self.can_start = {'vid_chooser_list': False, 'music_file_textbox': False, 'isRendering': False}
         
         self.progress_bar = QProgressBar()
         self.progress_bar.setMaximum(100)
@@ -87,7 +163,7 @@ class MainWindow(QMainWindow):
         self.show()
 
     def checkCanStart(self):
-        if self.can_start['vid_chooser_list'] and self.can_start['music_file_textbox']:
+        if self.can_start['vid_chooser_list'] and self.can_start['music_file_textbox'] and not self.can_start['isRendering']:
             self.start_btn.setEnabled(True)
         else:
             self.start_btn.setEnabled(False)
@@ -118,7 +194,13 @@ class MainWindow(QMainWindow):
 
     def addVideos(self):
         file_names = QFileDialog.getOpenFileNames(self, 'Select video files', '', 'Video files (*.mp4 *.avi *.mov *.flv *.wmv)')[0]
-        self.vid_chooser_list.addItems(file_names)
+
+        for i, name in enumerate(file_names):
+            thumbnail_name = f'./tmp/{str(uuid.uuid4())}.png'
+            tothebeat.createThumbnail(name, thumbnail_name)
+            item = QListWidgetItem(name)
+            item.setIcon(QIcon(thumbnails[i]))
+            self.vid_chooser_list.addItem(item)
 
     def removeVideos(self):
         for selected_widget in self.vid_chooser_list.selectedItems():
@@ -149,18 +231,36 @@ class MainWindow(QMainWindow):
         self.music_file_textbox.setText(file_name)
 
     def start(self):
-        output_file_name = QFileDialog.getSaveFileName(self, 'Save video as...', '', 'Video files (*.mp4 *.avi *.mov *.flv *.wmv)')[0]
+        self.output_file_name = QFileDialog.getSaveFileName(self, 'Save video as...', '', 'Video files (*.mp4 *.avi *.mov *.flv *.wmv)')[0]
         vids = []
         for i in range(len(self.vid_chooser_list)):
             vids.append(self.vid_chooser_list.item(i).text())
- 
-        tothebeat.createVideo(
+
+        self.progress_bar.setValue(1)
+        self.render_thread = RenderVideoThread(
             self.music_file_textbox.text(),
-            output_file_name,
+            self.output_file_name,
             1920,
             1080,
             vids=vids
         )
+        self.render_thread.set_progress.connect(self.set_progress)
+        self.render_thread.finished.connect(self.done)
+        self.render_thread.start()
+
+        # self.stop_btn.clicked.connect(self.render_thread.terminate) #IF WANT TO STOP THREAD
+        self.can_start['isRendering'] = True
+        self.checkCanStart()
+
+    def set_progress(self, progress):
+        self.progress_bar.setValue(progress)
+
+    def done(self):
+        self.progress_bar.setValue(100)
+        QMessageBox.information(self, 'Render complete!', f'Video has been successfully rendered to {self.output_file_name}!')
+        self.progress_bar.setValue(0)
+        self.can_start['isRendering'] = False
+        self.checkCanStart()
 
 if __name__ == '__main__':
     app = QApplication([])
@@ -168,4 +268,4 @@ if __name__ == '__main__':
     window = MainWindow()
 
     if (app):
-        app.exec_()
+        sys.exit(app.exec_())

@@ -5,6 +5,9 @@ import subprocess
 import sys
 from os import walk
 
+def createThumbnail(vid_path, img_path):
+    subprocess.call(['ffmpeg', '-i', vid_path, '-vframes', '1', img_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
 def getDuration(filename):
     # Get the duration of media file `filename`
     result = subprocess.Popen(['ffmpeg', '-i', filename], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -77,7 +80,7 @@ def exportBeatTimesAsCSV(beat_times, path):
 # split_every_n_beat = 8                              # The beat at which clips are split at 
 # preset = 'ultrafast'                                # FFMPEG preset to encode the videos
 
-def createVideo(
+def getRenderVideoCmd(
     audio_path,
     output_file_name,
     resolution_w,
@@ -93,10 +96,12 @@ def createVideo(
     #
     # Get beat_times and the list of videos
     #
+    print('Getting beat times...')
     if csv_path == '':
         beat_times = getBeatTimesFromMusic(audio_path, split_every_n_beat)
     else:
         beat_times = getBeatTimesFromCSV(csv_path, audio_path, 1)
+    print('Finished.')
 
 
     if len(vids) == 0:
@@ -112,6 +117,7 @@ def createVideo(
     #   end_frame   : int   - The frame to stop cutting the video
     #   speed_factor: float - The factor by which to multiply the PTS of the video to fix speed issues with forcing the input frame rates to `fps`
     #
+    print('Generating clip list...')
     clips = []
     tot_frames = 0
     beat_index = 0
@@ -148,14 +154,16 @@ def createVideo(
                 break
 
             interval = beat_times[beat_index + 1] - beat_times[beat_index]
+    print('Finished.')
 
     #
     # Use filter_complex to combine videos at the specified frame splits 
     #
+    print('Generating command string...')
     cmd = ['ffmpeg']
     cmd.append('-hide_banner')
-    #cmd.append('-loglevel')
-    #cmd.append('error')
+    cmd.append('-loglevel')
+    cmd.append('level+info')
     cmd.append('-i')
     cmd.append(audio_path)
 
@@ -199,18 +207,37 @@ def createVideo(
     cmd.append(str(fps))
     cmd.append('-y')
     cmd.append(output_file_name)
-    print(cmd)
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    for c in iter(lambda: process.stdout.read(1), b''):  # replace '' with b'' for Python 3
-        c = c.decode('utf-8')
-        #sys.stdout.write(c)
-        if c == 'f':
-            print('LOL')
+    print('Finished.')
 
-    print('DONE')
+    return (cmd, tot_frames)
+
+def renderVideo(data):
+    # Run cmd, track progress
+    cmd = data[0]
+    tot_frames = data[1]
+
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    line = ''
+    end_char = '\n'
+    for c in iter(lambda: process.stdout.read(1), b''):
+        c = c.decode('utf-8')
+        if c != end_char:
+            line += c
+            if 'frame=' in line:
+                end_char = 'x'
+        else:
+            if '[fatal]' in line:
+                raise Exception('An error occurred: ' + line)
+            elif 'frame=' in line:
+                cur_frame = int(line[line.index('frame=')+6:line.index('fps')].strip())
+                progress = cur_frame / tot_frames
+                print(f'Render progress: {progress*100:.3f}%')
+            line = ''
+    
+    print('Render complete.')
 
 if __name__ == '__main__':
-    createVideo(
+    renderVideo(getRenderVideoCmd(
         './music/creativeminds.mp3',
         'output.mp4',
         1920,
@@ -218,4 +245,5 @@ if __name__ == '__main__':
         split_every_n_beat=8,
         vid_directory=sys.argv[1],
         csv_path='./creativeminds.csv'
-    )
+    ))
+    
