@@ -66,6 +66,8 @@ def exportBeatTimesAsCSV(beat_times, path):
 
 # TODO: Also allow user to just split music into beat chunks to manually add videos
 # TODO: Allow user to use pictures as well, instead of only videos
+# TODO: Make it so it splits videos so that the last frame of the current clip is not too similar to the first frame of the next clip
+# TODO: Fix weird error where it doesn't sync up to the beat when fps is 24 (not 30 or 60)
 
 ###########
 # OPTIONS #

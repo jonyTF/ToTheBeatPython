@@ -5,10 +5,11 @@ import tothebeat
 import sys
 import subprocess
 import uuid
+import tempfile
 
-# TODO: Allow user to edit advanced options 
 # TODO: Create a little console thing to show progress of rendering
 # TODO: Catching errors --> file does not exist, ffmpeg error, etc.
+# TODO: Allow user to cancel render in the middle
 
 class RenderVideoThread(QThread):
     setProgress = pyqtSignal(int)
@@ -73,7 +74,8 @@ class RenderVideoThread(QThread):
                 if 'frame=' in line:
                     end_char = 'x'
             else:
-                if '[fatal]' in line:
+                if '[fatal]' in line or '[error]' in line:
+                    print('FATAL')
                     raise Exception('An error occurred: ' + line)
                 elif 'frame=' in line:
                     cur_frame = int(line[line.index('frame=')+6:line.index('fps')].strip())
@@ -171,9 +173,43 @@ class MainWindow(QMainWindow):
         self.output_chooser_group_box.setLayout(self.output_chooser_layout)
 
         # OPTIONS
-        # TODO: Add hint text (hover text?)
-        self.preset_textbox = QComboBox()
-        self.preset_textbox.addItems([
+        split_beat_tooltip = 'Change this option to change when in the music the video cuts to another clip. Multiples of 3 and 4 work best for most music.'
+        self.split_beat_spinbox = QSpinBox()
+        self.split_beat_spinbox.setMinimum(1)
+        self.split_beat_spinbox.setValue(4)
+        self.split_beat_spinbox.setPrefix('Cut every ')
+        self.split_beat_spinbox.setSuffix(' beats')
+        self.split_beat_spinbox.setToolTip(split_beat_tooltip)
+
+        sep_tooltip = 'Clips from the same video must be at least this many seconds apart.'
+        self.sep_spinbox = QSpinBox()
+        self.sep_spinbox.setMinimum(1)
+        self.sep_spinbox.setValue(5)
+        self.sep_spinbox.setSuffix(' seconds')
+        self.sep_spinbox.setToolTip(sep_tooltip)
+
+        # TODO: Add a button in this combobox that says 'Custom resolution', and it pops up with a dialog box allowing you to input custom resolution
+        resolution_tooltip = 'Sets the output resolution of the video. Select "Custom resolution" to set your own. Higher resolutions will take longer to render.'
+        self.resolution_combobox = QComboBox()
+        self.resolution_combobox.addItems([
+            '1280 x 720 (720p)',
+            '1920 x 1080 (1080p)',
+            '3840 x 2160 (4K)',
+            'Custom resolution'
+        ])
+        self.resolution_combobox.insertSeparator(3)
+        self.resolution_combobox.setToolTip(resolution_tooltip)
+
+        fps_tooltip = 'Sets the output frames per second of the video. The default value of 30fps should work well for most videos.'
+        self.fps_spinbox = QSpinBox()
+        self.fps_spinbox.setMinimum(1)
+        self.fps_spinbox.setValue(30)
+        self.fps_spinbox.setSuffix(' fps')
+        self.fps_spinbox.setToolTip(fps_tooltip)
+
+        preset_tooltip = 'Sets the FFmpeg render preset. Faster presets will result in faster render times but bigger file sizes.'
+        self.preset_combobox = QComboBox()
+        self.preset_combobox.addItems([
             'ultrafast', 
             'superfast',
             'veryfast',
@@ -184,22 +220,22 @@ class MainWindow(QMainWindow):
             'slower',
             'veryslow'
         ])
-        self.preset_textbox.setCurrentIndex(0) #ultrafast
+        self.preset_combobox.setCurrentIndex(0) #ultrafast
+        self.preset_combobox.setToolTip(preset_tooltip)
 
-        self.split_beat_spinbox = QSpinBox()
-        self.split_beat_spinbox.setMinimum(1)
-        self.split_beat_spinbox.setValue(4)
-        self.split_beat_spinbox.setPrefix('Cut every ')
-        self.split_beat_spinbox.setSuffix(' beats')
+        self.options = [
+            [QLabel('Beat to cut at'), self.split_beat_spinbox],
+            [QLabel('Minimum separation time'), self.sep_spinbox],
+            [QLabel('Frames per second'), self.fps_spinbox],
+            [QLabel('Resolution'), self.resolution_combobox],
+            [QLabel('FFmpeg render preset'), self.preset_combobox]
+        ]
 
-
+        for r, row in enumerate(self.options):
+            for c, widget in enumerate(row):
+                self.optionsGrid.addWidget(widget, r, c)
+        
         self.optionsLayout.addWidget(QLabel('Hover over an option to learn more about it'))
-        
-        self.optionsGrid.addWidget(QLabel('Beat to cut at'), 0, 0)
-        self.optionsGrid.addWidget(self.split_beat_spinbox, 0, 1)
-        self.optionsGrid.addWidget(QLabel('FFmpeg render preset'), 1, 0)
-        self.optionsGrid.addWidget(self.preset_textbox, 1, 1)
-        
         self.optionsLayout.addLayout(self.optionsGrid)
         self.optionsLayout.addStretch()
 
@@ -269,13 +305,16 @@ class MainWindow(QMainWindow):
     def addVideos(self):
         file_names = QFileDialog.getOpenFileNames(self, 'Select video files', '', 'Video files (*.mp4 *.avi *.mov *.flv *.wmv)')[0]
 
-        for i, name in enumerate(file_names):
-            thumbnail_name = f'./tmp/{str(uuid.uuid4())}.png'
-            tothebeat.createThumbnail(name, thumbnail_name)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        with tempfile.TemporaryDirectory() as dir:
+            for i, name in enumerate(file_names):
+                thumbnail_name = f'{dir}/{str(uuid.uuid4())}.png'
+                tothebeat.createThumbnail(name, thumbnail_name)
 
-            short_name = name.split('/')[-1]
-            self.vid_chooser_list.addItem(QListWidgetItem(QIcon(thumbnail_name), short_name))
-            self.vids.append(name)
+                short_name = name.split('/')[-1]
+                self.vid_chooser_list.addItem(QListWidgetItem(QIcon(thumbnail_name), short_name))
+                self.vids.append(name)
+        QApplication.restoreOverrideCursor()
 
     def removeVideos(self):
         for selected_widget in self.vid_chooser_list.selectedItems():
@@ -317,14 +356,26 @@ class MainWindow(QMainWindow):
 
     def start(self):
         self.output_file_name = self.output_file_textbox.text()
+        resolution = self.resolution_combobox.currentText().split('(')[0].strip().split('x')
+        resolution_w = int(resolution[0].strip())
+        resolution_h = int(resolution[1].strip())
+        sep = self.sep_spinbox.value()
+        fps = self.fps_spinbox.value()
+        split_every_n_beat = self.split_beat_spinbox.value()
+        preset = self.preset_combobox.currentText()
+
         self.progress_bar.show()
         self.progress_bar.setValue(0)
 
         self.render_thread = RenderVideoThread(
             self.music_file_textbox.text(),
             self.output_file_name,
-            1920,
-            1080,
+            resolution_w,
+            resolution_h,
+            sep=sep,
+            fps=fps,
+            split_every_n_beat=split_every_n_beat,
+            preset=preset,
             vids=self.vids
         )
         self.render_thread.setProgress.connect(self.setProgress)
