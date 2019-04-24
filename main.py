@@ -308,7 +308,7 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         with tempfile.TemporaryDirectory() as dir:
             for i, name in enumerate(file_names):
-                thumbnail_name = f'{dir}/{str(uuid.uuid4())}.png'
+                thumbnail_name = f'{dir}/{str(uuid.uuid4())}.jpg'
                 tothebeat.createThumbnail(name, thumbnail_name)
 
                 short_name = name.split('/')[-1]
