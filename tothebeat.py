@@ -61,11 +61,14 @@ def getBeatTimesFromCSV(csv_path, audio_path, split_every_n_beat):
 
     return beat_times
 
+def isVideo(filename):
+    return filename.split('.')[-1] in ('mp4', 'avi', 'mov', 'flv', 'wmv')
+
 def exportBeatTimesAsCSV(beat_times, path):
     librosa.output.times_csv(path, beat_times)  
 
 # TODO: Also allow user to just split music into beat chunks to manually add videos
-# TODO: Allow user to use pictures as well, instead of only videos
+# TODO: Automatically add zoompan effects to pictures (and maybe videos too?)
 # TODO: Make it so it splits videos so that the last frame of the current clip is not too similar to the first frame of the next clip <-- probably not possible since pixel difference calc doesn't show much
     # ACTUALLY: maybe use ffmpeg's scene detection 
 # TODO: Fix weird error where it doesn't sync up to the beat when fps is 24 (not 30 or 60)
@@ -115,11 +118,12 @@ def getRenderVideoCmd(
     #
     # Create the `clips` list, which stores information to split the videos
     # Each index of clips is organized as such:
-    # (video_index, start_frame, end_frame, speed_factor)
-    #   video_index : int   - The index of the video in `vids`
-    #   start_frame : int   - The frame to start cutting the video
-    #   end_frame   : int   - The frame to stop cutting the video
-    #   speed_factor: float - The factor by which to multiply the PTS of the video to fix speed issues with forcing the input frame rates to `fps`
+    # (video_index, start_frame, end_frame, speed_factor, zoompan_effect_num)
+    #   video_index         : int   - The index of the video in `vids`.
+    #   start_frame         : int   - The frame to start cutting the video
+    #   end_frame           : int   - The frame to stop cutting the video
+    #   speed_factor        : float - The factor by which to multiply the PTS of the video to fix speed issues with forcing the input frame rates to `fps`
+    #   zoompan_effect_num  : int   - The number of the zoompan_effect to use on the video/image
     #
     print('Generating clip list...')
     clips = []
@@ -131,17 +135,36 @@ def getRenderVideoCmd(
         if beat_index + 1 >= len(beat_times):
             break
 
-        length = getSec(getDuration(vids[i]))
+        if isVideo(vids[i]):
 
-        # Needed to fix speed issues as a result of forcing frame rate to `fps`
-        orig_fps = getFrameRate(vids[i])
-        factor = fps / orig_fps
+            length = getSec(getDuration(vids[i]))
 
-        cur_time = 0
+            # Needed to fix speed issues as a result of forcing frame rate to `fps`
+            orig_fps = getFrameRate(vids[i])
+            factor = fps / orig_fps
 
-        # While still enough time left in the video
-        while cur_time+interval < length:
-            cur_time_fn = cur_time * fps
+            cur_time = 0
+
+            # While still enough time left in the video
+            while cur_time+interval < length:
+                cur_time_fn = cur_time * fps
+                interval_fn = interval * fps
+
+                # Correct the frame number if it doesn't match up with the current beat_time
+                correct_frame = int(beat_times[beat_index] * fps)
+                if tot_frames != correct_frame:
+                    interval_fn += correct_frame - tot_frames
+
+                clips.append((i, int(cur_time_fn), int(cur_time_fn) + int(interval_fn), factor))
+                tot_frames += int(interval_fn)
+                
+                cur_time = int(cur_time+interval+sep)
+                beat_index += 1
+                if beat_index + 1 >= len(beat_times):
+                    break
+
+                interval = beat_times[beat_index + 1] - beat_times[beat_index]
+        else:
             interval_fn = interval * fps
 
             # Correct the frame number if it doesn't match up with the current beat_time
@@ -149,13 +172,8 @@ def getRenderVideoCmd(
             if tot_frames != correct_frame:
                 interval_fn += correct_frame - tot_frames
 
-            clips.append((i, int(cur_time_fn), int(cur_time_fn) + int(interval_fn), factor))
+            clips.append((i, 0, int(interval_fn), 1))
             tot_frames += int(interval_fn)
-            
-            cur_time = int(cur_time+interval+sep)
-            beat_index += 1
-            if beat_index + 1 >= len(beat_times):
-                break
 
             interval = beat_times[beat_index + 1] - beat_times[beat_index]
     print('Finished.')
@@ -172,6 +190,9 @@ def getRenderVideoCmd(
     cmd.append(audio_path)
 
     for i in range(len(vids)):
+        if not isVideo(vids[i]):
+            cmd.append('-loop')
+            cmd.append('1')
         cmd.append('-r')
         cmd.append(str(fps))
         cmd.append('-i')
@@ -191,7 +212,9 @@ def getRenderVideoCmd(
             f'setpts={factor:.3f}*PTS,'
             f'trim=start_pts={start_pts}:end_pts={end_pts},'
             f'setpts=PTS-STARTPTS,'
-            f'scale=w={resolution_w}:h={resolution_h}:force_original_aspect_ratio=decrease'
+            f'scale=w={resolution_w}:h={resolution_h}:force_original_aspect_ratio=increase,'
+            f'crop={resolution_w}:{resolution_h}:(in_w-{resolution_w})/2:(in_h-{resolution_h})/2,'
+            f'setsar=1:1'
             f'[v{i}];'
         )
         filter_str += trim_str
@@ -248,6 +271,6 @@ if __name__ == '__main__':
         1080,
         split_every_n_beat=8,
         vid_directory=sys.argv[1],
-        csv_path='./creativeminds.csv'
+        #csv_path='./creativeminds.csv'
     ))
     
