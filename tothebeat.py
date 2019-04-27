@@ -69,7 +69,6 @@ def exportBeatTimesAsCSV(beat_times, path):
     librosa.output.times_csv(path, beat_times)  
 
 # TODO: Also allow user to just split music into beat chunks to manually add videos
-# TODO: Automatically add zoompan effects to pictures (and maybe videos too?)
 # TODO: Make it so it splits videos so that the last frame of the current clip is not too similar to the first frame of the next clip <-- probably not possible since pixel difference calc doesn't show much
     # ACTUALLY: maybe use ffmpeg's scene detection 
 # TODO: Fix weird error where it doesn't sync up to the beat when fps is 24 (not 30 or 60)
@@ -250,6 +249,8 @@ def getRenderVideoCmd(
     cmd.append('0:a')
     cmd.append('-preset')
     cmd.append(preset)
+    cmd.append('-pix_fmt')
+    cmd.append('yuv420p')
     cmd.append('-r')
     cmd.append(str(fps))
     cmd.append('-y')
