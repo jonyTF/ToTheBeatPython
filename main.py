@@ -303,7 +303,9 @@ class MainWindow(QMainWindow):
         self.checkCanStart()
 
     def addVideos(self):
-        file_names = QFileDialog.getOpenFileNames(self, 'Select video files', '', 'Video files (*.mp4 *.avi *.mov *.flv *.wmv)')[0]
+        file_names = QFileDialog.getOpenFileNames(self, 'Select video files', '', (
+            'Video and Image files (*.mp4 *.avi *.mov *.flv *.wmv *.png *.jpg *.bpm *.tiff *.gif *.webp)'
+        ))[0]
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         with tempfile.TemporaryDirectory() as dir:

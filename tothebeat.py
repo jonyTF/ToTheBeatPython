@@ -4,6 +4,7 @@ import librosa
 import subprocess
 import sys
 from os import walk
+import random
 
 def createThumbnail(vid_path, img_path):
     cmd = ['ffmpeg', '-i', vid_path, '-vf', 'scale=w=320:h=240:force_original_aspect_ratio=decrease', '-vframes', '1', '-y', img_path]
@@ -80,7 +81,7 @@ def exportBeatTimesAsCSV(beat_times, path):
 # output_file_name = 'output.mp4'                     # The video file to export
 # resolution_w = 1920                                 # Output resolution of video (WIDTH)
 # resolution_h = 1080                                 # Output resolution of video (HEIGHT)
-# vids = []                                           # The videos to be stitched together
+# vids = []                                           # The videos/images to be stitched together
 # vid_directory = sys.argv[1]                         # Directory that stores the videos to edit together
 # sep = 5                                             # Clips from the same video must be at least this many seconds apart
 # fps = 30                                            # Output FPS of video
@@ -110,20 +111,25 @@ def getRenderVideoCmd(
         beat_times = getBeatTimesFromCSV(csv_path, audio_path, 1)
     print('Finished.')
 
-
+    #
+    # Get videos from given directory if vids isn't provided
+    #
     if len(vids) == 0:
-        for (dirpath, dirnames, filenames) in walk(vid_directory):
-            vids.extend([dirpath+'/'+name for name in filenames])
+        if vid_directory != '':
+            for (dirpath, dirnames, filenames) in walk(vid_directory):
+                vids.extend([dirpath+'/'+name for name in filenames])
+        else:
+            raise Exception('Neither vids nor vid_directory was specified.')
 
     #
     # Create the `clips` list, which stores information to split the videos
     # Each index of clips is organized as such:
-    # (video_index, start_frame, end_frame, speed_factor, zoompan_effect_num)
-    #   video_index         : int   - The index of the video in `vids`.
-    #   start_frame         : int   - The frame to start cutting the video
-    #   end_frame           : int   - The frame to stop cutting the video
-    #   speed_factor        : float - The factor by which to multiply the PTS of the video to fix speed issues with forcing the input frame rates to `fps`
-    #   zoompan_effect_num  : int   - The number of the zoompan_effect to use on the video/image
+    # (video_index, start_frame, end_frame, speed_factor, zoompan_effect)
+    #   video_index     : int   - The index of the video in `vids`.
+    #   start_frame     : int   - The frame to start cutting the video
+    #   end_frame       : int   - The frame to stop cutting the video
+    #   speed_factor    : float - The factor by which to multiply the PTS of the video to fix speed issues with forcing the input frame rates to `fps`
+    #   zoompan_effect  : str   - The zoompan_effect to use on the video/image
     #
     print('Generating clip list...')
     clips = []
@@ -155,7 +161,7 @@ def getRenderVideoCmd(
                 if tot_frames != correct_frame:
                     interval_fn += correct_frame - tot_frames
 
-                clips.append((i, int(cur_time_fn), int(cur_time_fn) + int(interval_fn), factor))
+                clips.append((i, int(cur_time_fn), int(cur_time_fn) + int(interval_fn), factor, ''))
                 tot_frames += int(interval_fn)
                 
                 cur_time = int(cur_time+interval+sep)
@@ -172,9 +178,11 @@ def getRenderVideoCmd(
             if tot_frames != correct_frame:
                 interval_fn += correct_frame - tot_frames
 
-            clips.append((i, 0, int(interval_fn), 1))
+            effect = ('zoom_in', 'zoom_out', 'pan_right', 'pan_left')[random.randint(0,3)]
+            clips.append((i, 0, int(interval_fn), 1, effect))
             tot_frames += int(interval_fn)
 
+            beat_index += 1
             interval = beat_times[beat_index + 1] - beat_times[beat_index]
     print('Finished.')
 
@@ -207,14 +215,26 @@ def getRenderVideoCmd(
         factor = clips[i][3]
         start_pts = clips[i][1]
         end_pts = clips[i][2]
+        zoompan_effects = { # TODO: Have options to disable certain effects in main.py
+            'zoom_in'   : f"zoompan=z='min(zoom+0.0015,1.5)':d={end_pts-start_pts}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={resolution_w}x{resolution_h}:fps={fps},",
+            'zoom_out'  : f"zoompan=z='if(lte(zoom,1),1+0.0015*{end_pts-start_pts},max(zoom-0.0015,1.001))':d={end_pts-start_pts}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={resolution_w}x{resolution_h}:fps={fps},",
+            'pan_right' : f"zoompan=z=1.1:d={end_pts-start_pts}:x='x+(zoom*ih-ih)/{end_pts-start_pts}':y='ih/2-(ih/zoom/2)':s={resolution_w}x{resolution_h}:fps={fps},",
+            'pan_left'  : f"zoompan=z=1.1:d={end_pts-start_pts}:x='if(lte(x,0),zoom*ih-ih,max(x-(zoom*ih-ih)/{end_pts-start_pts},0.001))':y='ih/2-(ih/zoom/2)':s={resolution_w}x{resolution_h}:fps={fps},",
+        }
+        effect = zoompan_effects[clips[i][4]] if clips[i][4] != '' else ''
+
+        w = resolution_w if effect == '' else 1920*4
+        h = resolution_h if effect == '' else 1080*4
+
         trim_str =  (
             f'[{stream_num}:v]'
+            f'scale=w={w}:h={h}:force_original_aspect_ratio=increase,'
+            f'crop={w}:{h}:(in_w-{w})/2:(in_h-{h})/2,'
+            f'setsar=1:1,'
+            f'{effect}'
             f'setpts={factor:.3f}*PTS,'
             f'trim=start_pts={start_pts}:end_pts={end_pts},'
-            f'setpts=PTS-STARTPTS,'
-            f'scale=w={resolution_w}:h={resolution_h}:force_original_aspect_ratio=increase,'
-            f'crop={resolution_w}:{resolution_h}:(in_w-{resolution_w})/2:(in_h-{resolution_h})/2,'
-            f'setsar=1:1'
+            f'setpts=PTS-STARTPTS'
             f'[v{i}];'
         )
         filter_str += trim_str
@@ -235,6 +255,7 @@ def getRenderVideoCmd(
     cmd.append('-y')
     cmd.append(output_file_name)
     print('Finished.')
+    print(' '.join(cmd))
 
     return (cmd, tot_frames)
 
@@ -273,4 +294,9 @@ if __name__ == '__main__':
         vid_directory=sys.argv[1],
         #csv_path='./creativeminds.csv'
     ))
-    
+    '''
+    ffmpeg -r 30 -i test_videos/pan.mp4 -loop 1 -i test_videos/ken.jpg -filter_complex "[0:v]trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS,scale=w=1920:h=1080:force_original_aspect_ratio=increase,setsar=1:1[v0];[1:v]scale=w=1920*4:h=1080*4:force_original_aspect_ratio=increase,crop=1920*4:1080*4:(in_w-1920*4)/2:(in_h-1080*4)/2,setsar=1:1,zoompan=z='if(lte(zoom,1),1+0.0015*60,max(zoom-0.0015,1.001))':d=60:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30,trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2[out]" -map "[out]" -preset ultrafast -y -r 30 lel.mp4
+    ffmpeg -r 30 -i test_videos/pan.mp4 -loop 1 -i test_videos/ken.jpg -filter_complex "[0:v]trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS,scale=w=1920:h=1080:force_original_aspect_ratio=increase,setsar=1:1[v0];[1:v]scale=w=1920*4:h=1080*4:force_original_aspect_ratio=increase,crop=1920*4:1080*4:(in_w-1920*4)/2:(in_h-1080*4)/2,setsar=1:1,zoompan=z='min(zoom+0.0015,1.5)':d=60:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30,trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2[out]" -map "[out]" -preset ultrafast -y -r 30 lel.mp4
+    ffmpeg -r 30 -i test_videos/pan.mp4 -loop 1 -i test_videos/ken.jpg -filter_complex "[0:v]trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS,scale=w=1920:h=1080:force_original_aspect_ratio=increase,setsar=1:1[v0];[1:v]scale=w=1920*4:h=1080*4:force_original_aspect_ratio=increase,crop=1920*4:1080*4:(in_w-1920*4)/2:(in_h-1080*4)/2,setsar=1:1,zoompan=z=1.1:d=60:x='x+(zoom*ih-ih)/60':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30,trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2[out]" -map "[out]" -preset ultrafast -y -r 30 lel.mp4
+    ffmpeg -r 30 -i test_videos/pan.mp4 -loop 1 -i test_videos/ken.jpg -filter_complex "[0:v]trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS,scale=w=1920:h=1080:force_original_aspect_ratio=increase,setsar=1:1[v0];[1:v]scale=w=1920*4:h=1080*4:force_original_aspect_ratio=increase,crop=1920*4:1080*4:(in_w-1920*4)/2:(in_h-1080*4)/2,setsar=1:1,zoompan=z=1.1:d=60:x='if(lte(x,0),zoom*ih-ih,max(x-(zoom*ih-ih)/60,0.001))':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30,trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2[out]" -map "[out]" -preset ultrafast -y -r 30 lel.mp4
+    '''
