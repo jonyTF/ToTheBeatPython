@@ -4,6 +4,7 @@ import librosa
 import subprocess
 import sys
 from os import walk
+import os
 import random
 
 def createThumbnail(vid_path, img_path):
@@ -71,6 +72,7 @@ def exportBeatTimesAsCSV(beat_times, path):
 # TODO: Also allow user to just split music into beat chunks to manually add videos
 # TODO: Make it so it splits videos so that the last frame of the current clip is not too similar to the first frame of the next clip <-- probably not possible since pixel difference calc doesn't show much
     # ACTUALLY: maybe use ffmpeg's scene detection 
+    # NO ANSON'S IDEA: make the resolution really small, THEN do pixel comparison to see if significantly changed
 # TODO: Fix weird error where it doesn't sync up to the beat when fps is 24 (not 30 or 60)
 
 ###########
@@ -98,7 +100,9 @@ def getRenderVideoCmd(
     preset='ultrafast',
     csv_path='',
     vids=[],
-    vid_directory=''
+    vid_directory='',
+    split_music_only=False,
+    split_music_dir='',
 ):
     #
     # Get beat_times and the list of videos
@@ -109,6 +113,20 @@ def getRenderVideoCmd(
     else:
         beat_times = getBeatTimesFromCSV(csv_path, audio_path, 1)
     print('Finished.')
+
+    if split_music_only:
+        if split_music_dir != '':
+            if not os.path.isdir(split_music_dir):
+                os.mkdir(split_music_dir)
+            audio_fname_full = audio_path.split('/')[-1].split('\\')[-1] # Split both at / and \ to account for Windows
+            audio_fname = audio_fname_full.split('.')[0]
+            audio_ext = audio_fname_full.split('.')[-1]
+            for i in range(len(beat_times)-1):
+                cmd = ['ffmpeg', '-i', audio_path, '-ss', str(beat_times[i]), '-to', str(beat_times[i+1]), '-y', split_music_dir+'/'+audio_fname+str(i)+'.'+audio_ext]
+                subprocess.call(cmd)
+            return ([], 0)
+        else:
+            raise Exception('split_music_dir must be specified to split music.')
 
     #
     # Get videos from given directory if vids isn't provided
@@ -293,7 +311,9 @@ if __name__ == '__main__':
         1080,
         split_every_n_beat=8,
         vid_directory=sys.argv[1],
-        #csv_path='./creativeminds.csv'
+        #csv_path='./creativeminds.csv',
+        split_music_only=True,
+        split_music_dir='lol'
     ))
     '''
     ffmpeg -r 30 -i test_videos/pan.mp4 -loop 1 -i test_videos/ken.jpg -filter_complex "[0:v]trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS,scale=w=1920:h=1080:force_original_aspect_ratio=increase,setsar=1:1[v0];[1:v]scale=w=1920*4:h=1080*4:force_original_aspect_ratio=increase,crop=1920*4:1080*4:(in_w-1920*4)/2:(in_h-1080*4)/2,setsar=1:1,zoompan=z='if(lte(zoom,1),1+0.0015*60,max(zoom-0.0015,1.001))':d=60:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30,trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2[out]" -map "[out]" -preset ultrafast -y -r 30 lel.mp4

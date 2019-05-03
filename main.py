@@ -6,6 +6,8 @@ import sys
 import subprocess
 import uuid
 import tempfile
+import os
+import signal
 
 # TODO: Create a little console thing to show progress of rendering
 # TODO: Catching errors --> file does not exist, ffmpeg error, etc.
@@ -40,6 +42,8 @@ class RenderVideoThread(QThread):
         self.vids = vids
         self.vid_directory = vid_directory
 
+        self.process = None
+
     def __del__(self):
         self.wait()
 
@@ -64,10 +68,10 @@ class RenderVideoThread(QThread):
         cmd = data[0]
         tot_frames = data[1]
 
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         line = ''
         end_char = '\n'
-        for c in iter(lambda: process.stdout.read(1), b''):
+        for c in iter(lambda: self.process.stdout.read(1), b''):
             c = c.decode('utf-8')
             if c != end_char:
                 line += c
@@ -84,6 +88,13 @@ class RenderVideoThread(QThread):
                 line = ''
         
         print('Render complete.')
+
+    def stop(self):
+        if self.process:
+            self.process.terminate()
+
+        self.terminate()
+
 
 
 class MainWindow(QMainWindow):
@@ -244,6 +255,10 @@ class MainWindow(QMainWindow):
         self.start_btn = QPushButton('Start')
         self.start_btn.clicked.connect(self.start)
         self.changeVidChooserBtnState()
+
+        self.stop_btn = QPushButton('Cancel')
+        self.stop_btn.clicked.connect(self.stop)
+        self.stop_btn.hide()
         
         self.progress_bar = QProgressBar()
         self.progress_bar.setMaximum(100)
@@ -257,6 +272,7 @@ class MainWindow(QMainWindow):
         self.layout.addWidget(self.tabs)
         self.layout.addWidget(self.output_chooser_group_box)
         self.layout.addWidget(self.start_btn)
+        self.layout.addWidget(self.stop_btn)
         self.layout.addWidget(self.progress_bar)
 
         self.central_widget.setLayout(self.layout)
@@ -384,18 +400,31 @@ class MainWindow(QMainWindow):
         self.render_thread.finished.connect(self.done)
         self.render_thread.start()
 
-        # self.stop_btn.clicked.connect(self.render_thread.terminate) #IF WANT TO STOP THREAD
+        #self.stop_btn.clicked.connect(self.render_thread.terminate)
+        self.stop_btn.show()
+
         self.can_start['isRendering'] = True
         self.checkCanStart()
+
+    def stop(self):
+        ans = QMessageBox.warning(None, 'Cancel render', 'Are you sure you want to cancel the rendering of this video?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ans == QMessageBox.Yes:
+            self.render_thread.stop()
+            self.render_thread.wait()
 
     def setProgress(self, progress):
         self.progress_bar.setValue(progress)
 
     def done(self):
-        self.progress_bar.setValue(100)
-        QMessageBox.information(self, 'Render complete!', f'Video has been successfully rendered to {self.output_file_name}!')
+        if os.path.isfile(self.output_file_name):
+            self.progress_bar.setValue(100)
+            QMessageBox.information(self, 'Render complete!', f'Video has been successfully rendered to {self.output_file_name}!')
+        else: 
+            self.progress_bar.setValue(0)
+            QMessageBox.critical(self, 'Something went wrong!', 'The video could not be rendered for some reason.')
         self.progress_bar.hide()
         self.progress_bar.setValue(0)
+        self.stop_btn.hide()
         self.can_start['isRendering'] = False
         self.checkCanStart()
 
