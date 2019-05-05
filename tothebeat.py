@@ -29,6 +29,15 @@ def getFrameRate(filename):
             return float(l[l.rindex(',', 0, l.index('fps'))+1:l.index('fps')].strip())
     raise Exception('Framerate not found for ' + filename)
 
+def getSamplingFrequency(filename):
+    # Get the sampling frequency of audio file `filename`
+    result = subprocess.Popen(['ffmpeg', '-i', filename], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for l in result.stdout.readlines():
+        l = l.decode('utf-8')
+        if 'Audio' in l:
+            return int(l[l.rindex(',', 0, l.index('Hz'))+1:l.index('Hz')].strip())
+    raise Exception('Sampling frequency not found for ' + filename)
+
 def getSec(timestamp):
     # Get the amount of seconds in a timestamp of format HH:MM:SS
     h, m, s = timestamp.split(':')
@@ -115,14 +124,19 @@ def getRenderVideoCmd(
     print('Finished.')
 
     if split_music_only:
+        # This is currently not working - when ffmpeg splits the audio, it adds a little bit of silence to the end (could it be fixed with the `duration` option?)
         if split_music_dir != '':
             if not os.path.isdir(split_music_dir):
                 os.mkdir(split_music_dir)
             audio_fname_full = audio_path.split('/')[-1].split('\\')[-1] # Split both at / and \ to account for Windows
             audio_fname = audio_fname_full.split('.')[0]
             audio_ext = audio_fname_full.split('.')[-1]
+            sampling_freq = getSamplingFrequency(audio_path)
             for i in range(len(beat_times)-1):
-                cmd = ['ffmpeg', '-i', audio_path, '-ss', str(beat_times[i]), '-to', str(beat_times[i+1]), '-y', split_music_dir+'/'+audio_fname+str(i)+'.'+audio_ext]
+                start_sample = int(beat_times[i] * sampling_freq)
+                end_sample = int(beat_times[i+1] * sampling_freq)
+
+                cmd = ['ffmpeg', '-i', audio_path, '-af', f'atrim=start_sample={start_sample}:end_sample={end_sample}', '-y', split_music_dir+'/'+audio_fname+str(i)+'.'+audio_ext]
                 subprocess.call(cmd)
             return ([], 0)
         else:

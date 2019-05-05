@@ -11,7 +11,6 @@ import signal
 
 # TODO: Create a little console thing to show progress of rendering
 # TODO: Catching errors --> file does not exist, ffmpeg error, etc.
-# TODO: Allow user to cancel render in the middle
 
 class RenderVideoThread(QThread):
     setProgress = pyqtSignal(int)
