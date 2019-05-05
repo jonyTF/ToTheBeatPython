@@ -11,7 +11,20 @@ import signal
 
 # TODO: Create a little console thing to show progress of rendering
 # TODO: Catching errors --> file does not exist, ffmpeg error, etc.
+# TODO: After canceling render, do not show RENDER SUCCESS message
+# TODO: User can do a preliminary generation of beat_times, to preview if that is what they want. Store it in a csv to speed up render
 
+class GetBeatTimesThread(QThread):
+    def __init__(self):
+        QThread.__init__(self)
+
+    def __del__(self):
+        self.wait()
+
+    def run(self):
+        pass
+
+# TODO(URGENT): Figure out why it isn't terminating self.process
 class RenderVideoThread(QThread):
     setProgress = pyqtSignal(int)
 
@@ -47,8 +60,7 @@ class RenderVideoThread(QThread):
         self.wait()
 
     def run(self):
-        self.setProgress.emit(5)
-        data = tothebeat.getRenderVideoCmd(
+        data = tothebeat.renderVideo(
             self.audio_path,
             self.output_file_name,
             self.resolution_w,
@@ -59,39 +71,22 @@ class RenderVideoThread(QThread):
             self.preset,
             self.csv_path,
             self.vids,
-            self.vid_directory
+            self.vid_directory,
+            setProgressFunc=self.setProgress,
+            getProcessFunc=self.getProcess
         )
-        self.setProgress.emit(10)
-        
-        # Run cmd, track progress
-        cmd = data[0]
-        tot_frames = data[1]
-
-        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        line = ''
-        end_char = '\n'
-        for c in iter(lambda: self.process.stdout.read(1), b''):
-            c = c.decode('utf-8')
-            if c != end_char:
-                line += c
-                if 'frame=' in line:
-                    end_char = 'x'
-            else:
-                if '[fatal]' in line or '[error]' in line:
-                    print('FATAL')
-                    raise Exception('An error occurred: ' + line)
-                elif 'frame=' in line:
-                    cur_frame = int(line[line.index('frame=')+6:line.index('fps')].strip())
-                    progress = cur_frame / tot_frames
-                    self.setProgress.emit(10 + int(progress*90))
-                line = ''
         
         print('Render complete.')
+
+    def getProcess(self, cmd):
+        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return self.process
 
     def stop(self):
         if self.process:
             self.process.terminate()
-
+            print('TERMINATED PROCESS')
+        print('wat')
         self.terminate()
 
 

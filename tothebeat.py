@@ -6,6 +6,7 @@ import sys
 from os import walk
 import os
 import random
+import time
 
 def createThumbnail(vid_path, img_path):
     cmd = ['ffmpeg', '-i', vid_path, '-vf', 'scale=w=320:h=240:force_original_aspect_ratio=decrease', '-vframes', '1', '-y', img_path]
@@ -43,11 +44,17 @@ def getSec(timestamp):
     h, m, s = timestamp.split(':')
     return int(h) * 3600 + int(m) * 60 + int(s)
 
-def getBeatTimesFromMusic(path, split_every_n_beat):
+def getBeatTimesFromMusic(path, split_every_n_beat, setProgressFunc=None):
     # Get the beat times using librosa from an audio file `path`
     y, sr = librosa.load(path)
+    setProgress(setProgressFunc, 4)
+
     y_harmonic, y_percussive = librosa.effects.hpss(y)
+    setProgress(setProgressFunc, 8)
+
     tempo, beat_frames = librosa.beat.beat_track(y=y_percussive, sr=sr)
+    setProgress(setProgressFunc, 9)
+
     beat_times_init = librosa.frames_to_time(beat_frames, sr=sr)
 
     beat_times = [0]
@@ -55,10 +62,11 @@ def getBeatTimesFromMusic(path, split_every_n_beat):
         if i % split_every_n_beat == 0:
             beat_times.append(beat_times_init[i])
     beat_times.append(getSec(getDuration(path)))
+    setProgress(setProgressFunc, 10)
 
     return beat_times
 
-def getBeatTimesFromCSV(csv_path, audio_path, split_every_n_beat):
+def getBeatTimesFromCSV(csv_path, audio_path, split_every_n_beat, setProgressFunc=None):
     # Get the beat times from a csv file `path`
     beat_times = [0]
     with open(csv_path) as f:
@@ -78,6 +86,11 @@ def isVideo(filename):
 def exportBeatTimesAsCSV(beat_times, path):
     librosa.output.times_csv(path, beat_times)  
 
+def setProgress(setProgressFunc, progress):
+    # Used to update the progress bar in the QMainWindow
+    if setProgressFunc:
+        setProgressFunc.emit(progress)
+
 # TODO: Also allow user to just split music into beat chunks to manually add videos
 # TODO: Make it so it splits videos so that the last frame of the current clip is not too similar to the first frame of the next clip <-- probably not possible since pixel difference calc doesn't show much
     # ACTUALLY: maybe use ffmpeg's scene detection 
@@ -87,18 +100,19 @@ def exportBeatTimesAsCSV(beat_times, path):
 ###########
 # OPTIONS #
 ###########
-# audio_path = './music/creativeminds.mp3'            # Path of the song being used
-# output_file_name = 'output.mp4'                     # The video file to export
-# resolution_w = 1920                                 # Output resolution of video (WIDTH)
-# resolution_h = 1080                                 # Output resolution of video (HEIGHT)
-# vids = []                                           # The videos/images to be stitched together
-# vid_directory = sys.argv[1]                         # Directory that stores the videos to edit together
-# sep = 5                                             # Clips from the same video must be at least this many seconds apart
-# fps = 30                                            # Output FPS of video
-# split_every_n_beat = 8                              # The beat at which clips are split at 
-# preset = 'ultrafast'                                # FFMPEG preset to encode the videos
+# audio_path = './music/creativeminds.mp3'              # Path of the song being used
+# output_file_name = 'output.mp4'                       # The video file to export
+# resolution_w = 1920                                   # Output resolution of video (WIDTH)
+# resolution_h = 1080                                   # Output resolution of video (HEIGHT)
+# vids = []                                             # The videos/images to be stitched together
+# vid_directory = sys.argv[1]                           # Directory that stores the videos to edit together
+# sep = 5                                               # Clips from the same video must be at least this many seconds apart
+# fps = 30                                              # Output FPS of video
+# split_every_n_beat = 8                                # The beat at which clips are split at 
+# preset = 'ultrafast'                                  # FFMPEG preset to encode the videos
+# setProgressFunc = None                                # The function used to set the progress in the QMainWindow
 
-def getRenderVideoCmd(
+def renderVideo(
     audio_path,
     output_file_name,
     resolution_w,
@@ -112,16 +126,19 @@ def getRenderVideoCmd(
     vid_directory='',
     split_music_only=False,
     split_music_dir='',
+    setProgressFunc=None,
+    getProcessFunc=None,
 ):
     #
     # Get beat_times and the list of videos
     #
     print('Getting beat times...')
     if csv_path == '':
-        beat_times = getBeatTimesFromMusic(audio_path, split_every_n_beat)
+        beat_times = getBeatTimesFromMusic(audio_path, split_every_n_beat, setProgressFunc)
     else:
-        beat_times = getBeatTimesFromCSV(csv_path, audio_path, 1)
+        beat_times = getBeatTimesFromCSV(csv_path, audio_path, 1, setProgressFunc)
     print('Finished.')
+    setProgress(setProgressFunc, 10)
 
     if split_music_only:
         # This is currently not working - when ffmpeg splits the audio, it adds a little bit of silence to the end (could it be fixed with the `duration` option?)
@@ -138,7 +155,7 @@ def getRenderVideoCmd(
 
                 cmd = ['ffmpeg', '-i', audio_path, '-af', f'atrim=start_sample={start_sample}:end_sample={end_sample}', '-y', split_music_dir+'/'+audio_fname+str(i)+'.'+audio_ext]
                 subprocess.call(cmd)
-            return ([], 0)
+            return
         else:
             raise Exception('split_music_dir must be specified to split music.')
 
@@ -216,6 +233,7 @@ def getRenderVideoCmd(
             beat_index += 1
             interval = beat_times[beat_index + 1] - beat_times[beat_index]
     print('Finished.')
+    setProgress(setProgressFunc, 15)
 
     #
     # Use filter_complex to combine videos at the specified frame splits 
@@ -289,15 +307,14 @@ def getRenderVideoCmd(
     cmd.append(output_file_name)
     print('Finished.')
     print(' '.join(cmd))
+    setProgress(setProgressFunc, 20)
 
-    return (cmd, tot_frames)
-
-def renderVideo(data):
     # Run cmd, track progress
-    cmd = data[0]
-    tot_frames = data[1]
-
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if getProcessFunc:
+        process = getProcessFunc(cmd)
+    else: 
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        
     line = ''
     end_char = '\n'
     for c in iter(lambda: process.stdout.read(1), b''):
@@ -307,18 +324,22 @@ def renderVideo(data):
             if 'frame=' in line:
                 end_char = 'x'
         else:
-            if '[fatal]' in line:
+            if '[fatal]' in line or '[error]' in line:
                 raise Exception('An error occurred: ' + line)
             elif 'frame=' in line:
                 cur_frame = int(line[line.index('frame=')+6:line.index('fps')].strip())
                 progress = cur_frame / tot_frames
-                print(f'Render progress: {progress*100:.3f}%')
+                if setProgressFunc:
+                    setProgress(setProgressFunc, 20 + round(progress*80))
+                else:
+                    print(f'Render progress: {progress*100:.3f}%')
             line = ''
     
     print('Render complete.')
+    
 
 if __name__ == '__main__':
-    renderVideo(getRenderVideoCmd(
+    renderVideo(
         './music/creativeminds.mp3',
         'output.mp4',
         1920,
@@ -328,7 +349,7 @@ if __name__ == '__main__':
         #csv_path='./creativeminds.csv',
         split_music_only=True,
         split_music_dir='lol'
-    ))
+    )
     '''
     ffmpeg -r 30 -i test_videos/pan.mp4 -loop 1 -i test_videos/ken.jpg -filter_complex "[0:v]trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS,scale=w=1920:h=1080:force_original_aspect_ratio=increase,setsar=1:1[v0];[1:v]scale=w=1920*4:h=1080*4:force_original_aspect_ratio=increase,crop=1920*4:1080*4:(in_w-1920*4)/2:(in_h-1080*4)/2,setsar=1:1,zoompan=z='if(lte(zoom,1),1+0.0015*60,max(zoom-0.0015,1.001))':d=60:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30,trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2[out]" -map "[out]" -preset ultrafast -y -r 30 lel.mp4
     ffmpeg -r 30 -i test_videos/pan.mp4 -loop 1 -i test_videos/ken.jpg -filter_complex "[0:v]trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS,scale=w=1920:h=1080:force_original_aspect_ratio=increase,setsar=1:1[v0];[1:v]scale=w=1920*4:h=1080*4:force_original_aspect_ratio=increase,crop=1920*4:1080*4:(in_w-1920*4)/2:(in_h-1080*4)/2,setsar=1:1,zoompan=z='min(zoom+0.0015,1.5)':d=60:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30,trim=start_pts=0:end_pts=60,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2[out]" -map "[out]" -preset ultrafast -y -r 30 lel.mp4
