@@ -24,9 +24,11 @@ class GetBeatTimesThread(QThread):
     def run(self):
         pass
 
-# TODO(URGENT): Figure out why it isn't terminating self.process
+# TODO: Make sure that stopping still works (actually terminates process)
 class RenderVideoThread(QThread):
     setProgress = pyqtSignal(int)
+    showErrorMessage = pyqtSignal(str)
+    canceled = pyqtSignal()
 
     def __init__(self,
         audio_path,
@@ -73,20 +75,28 @@ class RenderVideoThread(QThread):
             self.vids,
             self.vid_directory,
             setProgressFunc=self.setProgress,
-            getProcessFunc=self.getProcess
+            getProcessFunc=self.getProcess,
+            showErrorFunc=self.showError
         )
-        
-        print('Render complete.')
 
     def getProcess(self, cmd):
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return self.process
 
-    def stop(self):
+    def showError(self, error_log_path):
+        self.showErrorMessage.emit(error_log_path)
+
+    def stop(self, canceled=False):
         if self.process:
             self.process.terminate()
-            print('TERMINATED PROCESS')
-        print('wat')
+
+        # Currently doesn't work
+        #if os.path.isfile(self.output_file_name):
+        #    os.remove(self.output_file_name)
+
+        if canceled:
+            self.canceled.emit()
+
         self.terminate()
 
 
@@ -97,6 +107,7 @@ class MainWindow(QMainWindow):
         self.title = 'To The Beat'
         self.can_start = {'vid_chooser_list': False, 'music_file_textbox': False, 'output_file_textbox': False, 'isRendering': False}
         self.vids = []
+        self.was_canceled = False
         self.initUI()
 
     def initUI(self):
@@ -391,6 +402,8 @@ class MainWindow(QMainWindow):
             vids=self.vids
         )
         self.render_thread.setProgress.connect(self.setProgress)
+        self.render_thread.showErrorMessage.connect(self.showErrorMessage)
+        self.render_thread.canceled.connect(self.canceled)
         self.render_thread.finished.connect(self.done)
         self.render_thread.start()
 
@@ -403,19 +416,26 @@ class MainWindow(QMainWindow):
     def stop(self):
         ans = QMessageBox.warning(None, 'Cancel render', 'Are you sure you want to cancel the rendering of this video?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ans == QMessageBox.Yes:
-            self.render_thread.stop()
+            self.render_thread.stop(canceled=True)
             self.render_thread.wait()
 
     def setProgress(self, progress):
         self.progress_bar.setValue(progress)
 
+    def showErrorMessage(self, error_log_path):
+        QMessageBox.critical(self, 'Something went wrong!', f'The video could not be rendered for some reason. A log of the error can be found at: {error_log_path}')
+        self.render_thread.stop()
+        self.render_thread.wait()
+
+    def canceled(self):
+        self.was_canceled = True
+        QMessageBox.information(self, 'Canceled', 'The rendering of the video has been successfully canceled.')
+
     def done(self):
-        if os.path.isfile(self.output_file_name):
+        if os.path.isfile(self.output_file_name) and not self.was_canceled:
             self.progress_bar.setValue(100)
             QMessageBox.information(self, 'Render complete!', f'Video has been successfully rendered to {self.output_file_name}!')
-        else: 
-            self.progress_bar.setValue(0)
-            QMessageBox.critical(self, 'Something went wrong!', 'The video could not be rendered for some reason.')
+        self.was_canceled = False
         self.progress_bar.hide()
         self.progress_bar.setValue(0)
         self.stop_btn.hide()

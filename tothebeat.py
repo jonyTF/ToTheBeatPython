@@ -7,6 +7,7 @@ from os import walk
 import os
 import random
 import time
+import datetime
 
 def createThumbnail(vid_path, img_path):
     cmd = ['ffmpeg', '-i', vid_path, '-vf', 'scale=w=320:h=240:force_original_aspect_ratio=decrease', '-vframes', '1', '-y', img_path]
@@ -128,6 +129,7 @@ def renderVideo(
     split_music_dir='',
     setProgressFunc=None,
     getProcessFunc=None,
+    showErrorFunc=None
 ):
     #
     # Get beat_times and the list of videos
@@ -325,7 +327,14 @@ def renderVideo(
                 end_char = 'x'
         else:
             if '[fatal]' in line or '[error]' in line:
-                raise Exception('An error occurred: ' + line)
+                if showErrorFunc:
+                    dir_path = os.path.dirname(os.path.realpath(__file__))
+                    error_log_path = dir_path + '/logs/LOG_' + str(int(time.time())) + '.txt'
+                    with open(error_log_path, 'w+') as f:
+                        f.write(line)
+                    showErrorFunc(error_log_path)
+                else:
+                    raise Exception('An error occurred: ' + line)
             elif 'frame=' in line:
                 cur_frame = int(line[line.index('frame=')+6:line.index('fps')].strip())
                 progress = cur_frame / tot_frames
